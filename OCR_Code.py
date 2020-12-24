@@ -1,12 +1,8 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# In[664]:
-
-
 import cv2 as cv
 import numpy as np
-from matplotlib import pyplot as plt
 import torch
 import torch.nn as nn
 from torch import optim
@@ -15,10 +11,6 @@ import os
 import pickle
 import random
 import editdistance
-
-
-# In[456]:
-
 
 # STEP1: TEXT DETECTION USING OPENCV
 
@@ -76,10 +68,6 @@ def within_height(point_group, cnt):
     max1 = max_y(cnt)
     max2 = max_y(point_group)
     return (min1 >= min2 and min1 <= max2) or (max1 <= max2 and max1 >= min2)
-
-
-# In[464]:
-
 
 # Read all the images in the folder data/
 # Also read the (text) source files associated with the images
@@ -177,8 +165,6 @@ for index in range(1, 149):
     all_data += [Data(img.box, text) for img,text in zip(img_patches, text_lines)]
 
 
-# In[671]:
-
 
 # Split to train data and test data
 train_data = all_data[:2950] + all_data[3000:4500]
@@ -186,19 +172,13 @@ val_data = all_data[4500:5000]
 test_data = all_data[5000:]
 
 
-# In[495]:
-
-
-plt.imshow(train_data[0].img, 'gray'), plt.show()
-
-
-# In[673]:
-
 
 # STEP 2: TEXT RECOGNITION
 # Train a GRU Model
 n_pixels = 20 # width of a bounding box
 n_hidden = 128
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class RNN(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
@@ -217,88 +197,15 @@ class RNN(nn.Module):
         return output
 
     def initHidden(self):
-        return torch.zeros(2, 1, self.hidden_size)
+        return torch.zeros(2, 1, self.hidden_size).to(device)
 
-rnn = RNN(n_pixels, n_hidden, n_letters)
+rnn = RNN(n_pixels, n_hidden, n_letters).to(device)
 h0 = rnn.initHidden()
 
 optimizer = optim.Adam(rnn.parameters())
 
 # ctc loss function
 ctc_loss = nn.CTCLoss(blank=n_letters-1)
-
-
-# In[ ]:
-
-
-# Training
-n_epochs = 10
-ckpt_dir = 'checkpoints/'
-for epoch in range(n_epochs):
-    print("Epoch: " + str(epoch+1))
-    # Iterate over all the training data 
-    for step in range(len(train_data)):
-        t_data = train_data[step]
-        patch = t_data.img
-        h, w = np.shape(patch)
-        # data augmentation: place the patch in different y locations
-        r = random.randint(0, n_pixels-h)
-        new_patch = np.zeros((n_pixels, w), 'uint8')
-        new_patch[r:h+r, 0:] = patch
-        
-        optimizer.zero_grad()
-        
-        input = torch.tensor(np.transpose(new_patch)).unsqueeze(1)
-        input = input.type(torch.FloatTensor)
-        output = rnn(input, h0)
-        # Compute CTC loss
-        loss = ctc_loss(output, t_data.target, t_data.output_length, t_data.target_length)
-        loss.backward()
-        optimizer.step()
-        
-        if step % 100 == 0:
-            print("Step: %d Loss: %.2f" % (step, loss.item()))
-            
-    ckpt_path = os.path.join(ckpt_dir, str(epoch+1)+'.pt')
-    torch.save(rnn.state_dict(), ckpt_path)
-    print('Checkpoint %d saved!' % (epoch+1))
-    
-    # Validation
-    val_loss = 0
-    for t_data in val_data:
-        with torch.no_grad():
-            patch = t_data.img
-            h, w = np.shape(patch)
-            # data augmentation: place the patch in different y locations
-            r = random.randint(0, n_pixels-h)
-            new_patch = np.zeros((n_pixels, w), 'uint8')
-            new_patch[r:h+r, 0:] = patch
-            input = torch.tensor(np.transpose(new_patch)).unsqueeze(1)
-            input = input.type(torch.FloatTensor)
-            output = rnn(input, h0)
-            pred_line = greedy_decode(output)
-            val_loss += editdistance.eval(pred_line, t_data.text) / len(t_data.text)
-    
-    print("Validation Loss = %.2f" % (100 * val_loss/len(val_data)))
-
-
-# In[586]:
-
-
-plt.imshow(test_data[2].img, 'gray'), plt.show()
-
-
-# In[646]:
-
-
-# Inference
-# Load saved Checkpoint
-rnn = RNN(n_pixels, n_hidden, n_letters)
-rnn.load_state_dict(torch.load(os.path.join(ckpt_dir, '20.pt')))
-
-
-# In[604]:
-
 
 # find the predicted characters
 def greedy_decode(output):
@@ -317,139 +224,60 @@ def greedy_decode(output):
     return ''.join(pred_s)
 
 
-# In[669]:
-
-
-index = 17
-t_data = test_data[index]
-with torch.no_grad():
-    patch = t_data.img
-    h, w = np.shape(patch)
-    # data augmentation: place the patch in different y locations
-    r = random.randint(0, n_pixels-h)
-    new_patch = np.zeros((n_pixels, w), 'uint8')
-    new_patch[r:h+r, 0:] = patch
-
-    input = torch.tensor(np.transpose(new_patch)).unsqueeze(1)
-    input = input.type(torch.FloatTensor)
-    output = rnn(input, h0)
-    pred_line = greedy_decode(output)
-    print(pred_line)
-    print(t_data.text)
+# Training
+n_epochs = 100
+ckpt_dir = 'checkpoints/'
+for epoch in range(n_epochs):
+    print("Epoch: " + str(epoch+1))
+    # Iterate over all the training data 
+    for step in range(len(train_data)):
+        t_data = train_data[step]
+        patch = t_data.img
+        h, w = np.shape(patch)
+        # data augmentation: place the patch in different y locations
+        r = random.randint(0, n_pixels-h)
+        new_patch = np.zeros((n_pixels, w), 'uint8')
+        new_patch[r:h+r, 0:] = patch
+        
+        optimizer.zero_grad()
+        
+        input = torch.tensor(np.transpose(new_patch)).unsqueeze(1)
+        input = input.type(torch.FloatTensor).to(device)
+        output = rnn(input, h0)
+        # Compute CTC loss
+        loss = ctc_loss(output, t_data.target, t_data.output_length, t_data.target_length)
+        loss.backward()
+        optimizer.step()
+        
+        if step % 500 == 0:
+            print("Step: %d Loss: %.2f" % (step, loss.item()))
+            
+    ckpt_path = os.path.join(ckpt_dir, str(epoch+1)+'.pt')
+    torch.save(rnn.state_dict(), ckpt_path)
+    print('Checkpoint %d saved!' % (epoch+1))
     
-plt.imshow(test_data[index].img, 'gray'), plt.show()
-
-editdistance.eval(pred_line, t_data.text)
-
-
-# In[628]:
-
-
-pred, lsm = beam_decode(output, beam_size=10, blank=n_letters-1)
-''.join([all_letters[i] for i in pred])
-
-
-# In[616]:
-
-
-import math
-import collections
-
-NEG_INF = -float("inf")
-
-def make_new_beam():
-    fn = lambda : (NEG_INF, NEG_INF)
-    return collections.defaultdict(fn)
-
-def logsumexp(*args):
-    """
-    Stable log sum exp.
-    """
-    if all(a == NEG_INF for a in args):
-        return NEG_INF
-    a_max = max(args)
-    lsp = math.log(sum(math.exp(a - a_max)
-                      for a in args))
-    return a_max + lsp
-
-def beam_decode(probs, beam_size=100, blank=0):
-    """
-    Performs inference for the given output probabilities.
-    Arguments:
-      probs: The output log probabilities (e.g. post-logsoftmax) for each
-        time step. Should be an array of shape (time x 1 x output dim).
-      beam_size (int): Size of the beam to use during inference.
-      blank (int): Index of the CTC blank label.
-    Returns the output label sequence and the corresponding negative
-    log-likelihood estimated by the decoder.
-    """
-    probs = probs.squeeze(1)
-    T, S = probs.shape
-
-    # Elements in the beam are (prefix, (p_blank, p_no_blank))
-    # Initialize the beam with the empty sequence, a probability of
-    # 1 for ending in blank and zero for ending in non-blank
-    # (in log space).
-    beam = [(tuple(), (0.0, NEG_INF))]
-
-    for t in range(T): # Loop over time
-
-        # A default dictionary to store the next step candidates.
-        next_beam = make_new_beam()
-
-        for s in range(S): # Loop over vocab
-            p = probs[t, s]
-
-            # The variables p_b and p_nb are respectively the
-            # probabilities for the prefix given that it ends in a
-            # blank and does not end in a blank at this time step.
-            for prefix, (p_b, p_nb) in beam: # Loop over beam
-
-                # If we propose a blank the prefix doesn't change.
-                # Only the probability of ending in blank gets updated.
-                if s == blank:
-                    n_p_b, n_p_nb = next_beam[prefix]
-                    n_p_b = logsumexp(n_p_b, p_b + p, p_nb + p)
-                    next_beam[prefix] = (n_p_b, n_p_nb)
-                    continue
-
-                # Extend the prefix by the new character s and add it to
-                # the beam. Only the probability of not ending in blank
-                # gets updated.
-                end_t = prefix[-1] if prefix else None
-                n_prefix = prefix + (s,)
-                n_p_b, n_p_nb = next_beam[n_prefix]
-                if s != end_t:
-                    n_p_nb = logsumexp(n_p_nb, p_b + p, p_nb + p)
-                else:
-                  # We don't include the previous probability of not ending
-                  # in blank (p_nb) if s is repeated at the end. The CTC
-                  # algorithm merges characters not separated by a blank.
-                  n_p_nb = logsumexp(n_p_nb, p_b + p)
-
-                # *NB* this would be a good place to include an LM score.
-                next_beam[n_prefix] = (n_p_b, n_p_nb)
-
-                # If s is repeated at the end we also update the unchanged
-                # prefix. This is the merging case.
-                if s == end_t:
-                    n_p_b, n_p_nb = next_beam[prefix]
-                    n_p_nb = logsumexp(n_p_nb, p_nb + p)
-                    next_beam[prefix] = (n_p_b, n_p_nb)
-
-        # Sort and trim the beam before moving on to the
-        # next time-step.
-        beam = sorted(next_beam.items(),
-                key=lambda x : logsumexp(*x[1]),
-                reverse=True)
-        beam = beam[:beam_size]
-
-    best = beam[0]
-    return best[0], -logsumexp(*best[1])
-
-
-# In[ ]:
+    # Validation
+    val_loss = 0
+    for t_data in val_data:
+        with torch.no_grad():
+            patch = t_data.img
+            h, w = np.shape(patch)
+            # data augmentation: place the patch in different y locations
+            r = random.randint(0, n_pixels-h)
+            new_patch = np.zeros((n_pixels, w), 'uint8')
+            new_patch[r:h+r, 0:] = patch
+            input = torch.as_tensor(np.transpose(new_patch)).unsqueeze(1)
+            input = input.type(torch.FloatTensor).to(device)
+            output = rnn(input, h0)
+            pred_line = greedy_decode(output)
+            val_loss += editdistance.eval(pred_line, t_data.text) / len(t_data.text)
+    
+    print("Validation Loss = %.2f" % (100 * val_loss/len(val_data)))
 
 
 
+# Inference
+# Load saved Checkpoint
+# rnn = RNN(n_pixels, n_hidden, n_letters)
+# rnn.load_state_dict(torch.load(os.path.join(ckpt_dir, '20.pt')))
 
